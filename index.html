@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white' stroke='black' stroke-width='1.5'%3E%3Cpath d='M4 3h13l3 3v15H4z'/%3E%3Cpath d='M8 3v5h7V3M7 21v-7h10v7'/%3E%3C/svg%3E">
+<title>Persistable.js</title>
+<meta name="description" content="Make any prototype persistable: a database connection as quick and dirty as your prototype.">
+<style>
+/* The landing page: black on white, one typeface, one diagram. */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#fff;color:#000;font:16px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+.page{max-width:56rem;margin:0 auto;padding:clamp(1.5rem,5vw,3rem) clamp(1rem,5vw,3rem);min-height:100vh;min-height:100svh;display:flex;flex-direction:column}
+.first{flex:1;display:flex;flex-direction:column;justify-content:center;padding:2rem 0 3rem}
+a{color:inherit;text-underline-offset:3px}
+a:focus-visible,button:focus-visible{outline:2px solid #000;outline-offset:2px}
+/* the drawing fills its box edge to edge, so its left side is the column's left side */
+.disk{display:block;width:2.15rem;height:2.4rem;margin:0 0 1.25rem}
+h1{margin:0;font-size:clamp(1.6rem,5vw,2.5rem);line-height:1.2;font-weight:700;letter-spacing:-.02em}
+/* the word is the product: set as the middle box of the diagram is, white on black */
+h1 .q{background:#000;color:#fff;padding:0 .18em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.lede{margin:1rem 0 0;max-width:38rem}
+
+/* the diagram: your prototype, Persistable.js, and whichever database is behind it today */
+.flow{display:flex;align-items:stretch;margin:clamp(2rem,6vw,3.5rem) 0;padding:0;list-style:none}
+.flow li{display:flex;align-items:center;min-width:0}
+.flow .node{flex:1 1 0}
+.box{width:100%;border:1px solid #000;padding:1.1rem .75rem;text-align:center;min-height:5.5rem;display:flex;flex-direction:column;justify-content:center}
+.box b{display:block}
+.box.mid{background:#000;color:#fff}
+.flow .arrow{flex:none;align-self:center;width:clamp(1.5rem,5vw,3.5rem);height:1rem}
+.arrow svg{display:block;width:100%;height:100%;overflow:visible}
+/* the last box turns over: one database at a time, because which one is not the point */
+.turn{position:relative;height:1.6rem;overflow:hidden}
+.turn span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:700;opacity:0;translate:0 100%;transition:translate .4s ease,opacity .4s ease}
+.turn span.on{opacity:1;translate:0 0}
+.turn span.off{opacity:0;translate:0 -100%}
+.all{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.turn{height:auto}.turn span{position:static;opacity:1;translate:none;transition:none}}
+
+/* the way in: one line to hand to a coding agent */
+.snippet{width:fit-content;max-width:100%;display:flex;align-items:stretch;border:1px solid #000}
+.snippet code{flex:1;min-width:0;padding:.7rem .9rem;font:inherit;overflow-wrap:anywhere}
+.snippet button{flex:none;border:0;border-left:1px solid #000;padding:0 1rem;min-width:8.5rem;background:#000;color:#fff;font:inherit;cursor:pointer}
+.snippet button:hover{background:#333}
+
+footer{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem}
+@media (max-width:44rem){.snippet{flex-direction:column;width:100%}.snippet button{border-left:0;border-top:1px solid #000;padding:.7rem 1rem}.flow{flex-direction:column}.flow .arrow{width:2.25rem;rotate:90deg;margin:.9rem 0}}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="first">
+    <svg class="disk" viewBox="3.375 2.375 17.25 19.25" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true"><path d="M4 3h13l3 3v15H4z"/><path d="M8 3v5h7V3M7 21v-7h10v7"/></svg>
+    <h1>Make your prototype <span class="q">persistable</span>.</h1>
+    <p class="lede">A database connection as quick and dirty as your prototype.</p>
+    <ol class="flow" aria-label="How it fits together">
+      <li class="node"><div class="box"><b>Your prototype</b></div></li>
+      <li class="arrow" aria-hidden="true"><svg viewBox="0 0 40 10" preserveAspectRatio="none"><path d="M0 5h39" fill="none" stroke="currentColor" vector-effect="non-scaling-stroke"/><path d="M34 1l5 4-5 4" fill="none" stroke="currentColor" vector-effect="non-scaling-stroke"/></svg></li>
+      <li class="node"><div class="box mid"><b>Persistable.js</b></div></li>
+      <li class="arrow" aria-hidden="true"><svg viewBox="0 0 40 10" preserveAspectRatio="none"><path d="M0 5h39" fill="none" stroke="currentColor" vector-effect="non-scaling-stroke"/><path d="M34 1l5 4-5 4" fill="none" stroke="currentColor" vector-effect="non-scaling-stroke"/></svg></li>
+      <li class="node"><div class="box" id="stores">
+        <span class="all">Cloudflare, Supabase, the browser session, or a backend of your own</span>
+        <div class="turn" aria-hidden="true"><span class="on">Cloudflare</span><span>Supabase</span><span>Browser session</span><span>Your own</span></div>
+      </div></li>
+    </ol>
+    <div class="snippet">
+      <code id="tag">Add github.com/PhilMcClelland/persistablejs to this prototype</code>
+      <button type="button" id="copy" aria-live="polite">Copy prompt</button>
+    </div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/PhilMcClelland/persistablejs">GitHub</a>
+    <a href="https://crittablejs.philmcclelland.com">Crittable.js is built on it</a>
+  </footer>
+</main>
+
+<script>
+/* Copy the install line. */
+(function () {
+  var btn = document.getElementById('copy'), text = document.getElementById('tag').textContent, back = 0;
+  function done(ok) { btn.textContent = ok ? 'Copied' : 'Press Ctrl+C'; clearTimeout(back); back = setTimeout(function () { btn.textContent = 'Copy prompt'; }, 1600); }
+  function pick() {   // no clipboard permission: select the line so the reader can copy it themselves
+    var r = document.createRange(); r.selectNodeContents(document.getElementById('tag'));
+    var s = getSelection(); s.removeAllRanges(); s.addRange(r); done(false);
+  }
+  btn.addEventListener('click', function () {
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(function () { done(true); }, pick); } else pick();
+  });
+})();
+
+/* The last box turns over to the next store every couple of seconds. It rests while the pointer is on it or the tab is
+   hidden, and does not turn at all for a reader who asks for less motion: they see all three. */
+(function () {
+  var box = document.getElementById('stores'), names = box.querySelectorAll('.turn span'), at = 0, held = false;
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  box.addEventListener('pointerenter', function () { held = true; }); box.addEventListener('pointerleave', function () { held = false; });
+  setInterval(function () {
+    if (held || document.hidden) return;
+    var was = names[at]; at = (at + 1) % names.length;
+    was.className = 'off'; names[at].className = 'on';
+    setTimeout(function () { was.className = ''; }, 450);
+  }, 2200);
+})();
+</script>
+</body>
+</html>

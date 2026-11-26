@@ -1,0 +1,42 @@
+name: sync crittable
+# Crittable.js carries unchanged copies of the client, the Supabase store and the code its tests stand the stores up with. When either changes here, push the new
+# copies to a branch of crittablejs; a workflow there checks them and opens the pull request. Never pushes to its main.
+on:
+  push:
+    branches: [main]
+    paths: [persistable.js, worker.js, stores/supabase.js, tests/mock-supabase.mjs]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sync:
+    # only where the deploy key lives: a fork has no key and nothing to sync
+    if: github.repository == 'PhilMcClelland/persistablejs'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Only send copies that pass the store's own checks
+        run: PERSISTABLE_VERIFY_MOCK=1 node verify.mjs https://mock.invalid && PERSISTABLE_VERIFY_MOCK=1 node verify.mjs --store supabase https://mock.supabase.co mock-key && node tests/stores.mjs && node tests/limits.mjs && node tests/rules.mjs && node tests/readkey.mjs && node tests/client.mjs
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: PhilMcClelland/crittablejs
+          # a deploy key on crittablejs that may write; it is what lets this repo push the branch
+          ssh-key: ${{ secrets.CRITTABLE_WRITE_KEY }}
+          path: .crittablejs
+      - name: Copy, and push the branch if anything changed
+        run: |
+          sha=$(git rev-parse --short HEAD)
+          cp persistable.js .crittablejs/crittable/vendor/persistable.js
+          cp worker.js .crittablejs/tests/vendor/persistable_worker.js
+          cp stores/supabase.js .crittablejs/crittable/vendor/persistable-supabase.js
+          cp tests/mock-supabase.mjs .crittablejs/tests/vendor/persistable_supabase_mock.mjs
+          cd .crittablejs
+          git add -A crittable/vendor/persistable.js tests/vendor/persistable_worker.js crittable/vendor/persistable-supabase.js tests/vendor/persistable_supabase_mock.mjs
+          if git diff --cached --quiet; then echo "crittablejs is already current with persistablejs@$sha"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qm "Persistable.js copies, from persistablejs@$sha"
+          git push --force origin HEAD:refs/heads/sync/persistable

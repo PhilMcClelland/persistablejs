@@ -1,0 +1,15 @@
+# Patterns
+
+Ways to build on the store that work well, and a few things that catch people out.
+
+- **Replies, votes, reactions: child objects.** Give each one its own object with `parent` set, rather than an array inside the parent. Two people adding at once then both succeed, each child keeps its own author, and deleting the parent takes them with it.
+- **Hiding instead of deleting.** Without a key only the creator can delete. For "anyone can dismiss this", set a flag in `open` (`setOpen(id, { hidden: true })`) and leave hidden objects out when you draw the list.
+- **Settings for one person.** A panel position or a "seen it" mark belongs in the browser's `localStorage`, not here. The store only knows people by browser, so it would hold nothing `localStorage` does not.
+- **What changed.** `votes.subscribe({ onCreate, onUpdate, onDelete, onResync })` hands you each change as it happens, from the moment you call it: call `list()` once for what is already there. `onResync` means the connection dropped and came back: read the collection again. `onCreate` and `onUpdate` always get the whole object. With `db.watch`, `what.object` is missing for an object over 8 KB, because the store does not send those to every listener; `get(id)` has it.
+- **Is the store up?** `db.onStatus(up => …)` hears `true` or `false` each time that changes, and the last known state straight away. Any answer from the store, even a refusal, counts as up; no answer, or the store's own failure, counts as down. While it is down the client asks again by itself, more slowly each time, so the page hears `true` when the store is back without making a request of its own. The client only reports it. What the page does about it (a line of text, a retry, keeping things in the browser for now) is the page's decision. It returns a function that stops the hearing.
+- **Why a call failed.** A refused call rejects with an `Error` that has `status` (the HTTP status: 403 not allowed, 409 taken or full, 413 too big) and `detail` (the store's own sentence). With no answer at all the error has neither. `get(id)` does not treat a missing object as a failure: it gives `null`.
+- **A well-known id can be taken.** In a space without a key, whoever creates `settings` first owns it. Do not rely on an id being yours unless the space has a key.
+- **A space is an origin, not a prototype.** The default space is the page's origin (scheme, host and port). Two prototypes in two folders of one site (`you.github.io/one` and `you.github.io/two`), or two projects run in turn on `http://localhost:5173`, share one space and see each other's collections. Pass `space: 'a-name-of-its-own'` to each when that matters.
+- **Pages with no site share one space.** A page opened from a file, or in a sandboxed frame, has no origin, so all such pages use the space `default` unless you pass `space`.
+- **Stored values are a stranger's words.** Without a key anyone can write to a space, so put what you read into the page as text, never as HTML.
+- **Flat objects for drawing.** `const flat = o => ({ ...o.data, ...o.open, id: o.id })`. Use it for reading only; a write has to say which part it is changing.

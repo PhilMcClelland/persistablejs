@@ -1,0 +1,30 @@
+name: check
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: The Worker's rules, run in Node through the real client
+        run: PERSISTABLE_VERIFY_MOCK=1 node verify.mjs https://mock.invalid
+      - name: The Supabase store, through the same client, against a stand-in for the project
+        run: PERSISTABLE_VERIFY_MOCK=1 node verify.mjs --store supabase https://mock.supabase.co mock-key
+      - name: Choosing a store, and a store that is asked what changed
+        run: node tests/stores.mjs
+      - name: The Worker's limits
+        run: node tests/limits.mjs
+      - name: The Worker's addresses, identities, listeners and origins
+        run: node tests/rules.mjs
+      - name: The read key
+        run: node tests/readkey.mjs
+      - name: The client
+        run: node tests/client.mjs
+      - name: The files parse
+        run: node --check worker.js && node --check persistable.js && node --check verify.mjs && node --check readkey.mjs && node --check stores/supabase.js && node --check stores/session.js

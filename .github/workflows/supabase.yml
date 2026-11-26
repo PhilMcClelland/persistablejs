@@ -1,0 +1,26 @@
+name: supabase
+# The Supabase store and stores/supabase.sql, checked against a real project.
+# Pull requests are checked against a stand-in (check.yml), which imitates the database's rules in JavaScript and so
+# cannot catch a mistake in the SQL itself. This run can. It is nightly and on demand, on main only, because a pull
+# request from outside the repository is not given the two values it needs.
+# The project must already have stores/supabase.sql applied: this checks the project, it does not change it.
+on:
+  schedule:
+    - cron: '23 7 * * *'   # every day, 07:23 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: github.repository == 'PhilMcClelland/persistablejs'   # a fork has no project to check against
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: The store against the real project (two public values, kept as secrets so the address is not in the log)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: node verify.mjs --store supabase "$SUPABASE_URL" "$SUPABASE_KEY" | sed -E 's#https://[a-z0-9]+\.supabase\.co[^ ]*#https://***#'

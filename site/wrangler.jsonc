@@ -1,0 +1,13 @@
+{
+  // The landing page at persistablejs.philmcclelland.com: static files only, no Worker code. This is not the store;
+  // the store is wrangler.jsonc in the folder above. Deploy with `npx wrangler@4 deploy` from this folder. The build
+  // step fills dist/ from the last commit (not from the working folder), so only tracked files can be published.
+  // A fork should change the name and the route, or delete this folder.
+  "name": "persistablejs-site",
+  "compatibility_date": "2025-10-01",
+  "build": { "command": "sh build.sh" },
+  "assets": { "directory": "./dist" },
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "persistablejs.philmcclelland.com", "custom_domain": true }]
+}

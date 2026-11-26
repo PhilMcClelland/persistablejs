@@ -1,0 +1,9 @@
+{
+  // Persistable.js keep-alive for a Supabase project. Deploy from this folder: `npx wrangler@4 deploy`, then set the two
+  // values with `npx wrangler@4 secret put SUPABASE_URL` and `npx wrangler@4 secret put SUPABASE_KEY` (the publishable key).
+  "name": "persistable-keepalive",
+  "main": "worker.js",
+  "compatibility_date": "2025-10-01",
+  "workers_dev": false,          // no public address: it only ever runs on the schedule
+  "triggers": { "crons": ["17 6 */2 * *"] }   // every second day, 06:17 UTC
+}

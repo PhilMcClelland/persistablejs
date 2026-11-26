@@ -1,0 +1,11 @@
+{
+  // Persistable.js. Deploy with `npx wrangler@4 deploy` from this folder; see SETUP.md.
+  "name": "persistable",
+  "main": "worker.js",
+  "compatibility_date": "2025-10-01",
+  "durable_objects": { "bindings": [{ "name": "SPACES", "class_name": "Space" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Space"] }]
+  // To limit which pages may use the store, add a comma to the end of the line above, and this line:
+  // "vars": { "ALLOW_ORIGINS": "https://my-prototype.example,https://another.example" }
+  // Every origin not listed is then turned away, a page on this machine (http://localhost:8000) included.
+}

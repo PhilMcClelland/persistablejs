@@ -1,0 +1,10 @@
+.env
+.env.*
+*.env
+*.pem
+*.key
+.claude/settings.local.json
+.wrangler/
+node_modules/
+.DS_Store
+site/dist/
