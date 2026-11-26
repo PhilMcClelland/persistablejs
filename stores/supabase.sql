@@ -1,4 +1,4 @@
--- Persistable.js 0.1.0 on Supabase: one table of objects, two small ones of running totals, and the functions that are the
+-- Persistable.js 0.2.0 on Supabase: one table of objects, two small ones of running totals, and the functions that are the
 -- only way to them.
 -- Run once in the project (SQL editor, `supabase db push`, or an agent with database access). Safe to run again.
 --

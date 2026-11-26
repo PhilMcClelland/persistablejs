@@ -33,8 +33,9 @@ jobs:
           cp worker.js .crittablejs/tests/vendor/persistable_worker.js
           cp stores/supabase.js .crittablejs/crittable/vendor/persistable-supabase.js
           cp tests/mock-supabase.mjs .crittablejs/tests/vendor/persistable_supabase_mock.mjs
+          cp token.mjs .crittablejs/tests/vendor/persistable_token.mjs
           cd .crittablejs
-          git add -A crittable/vendor/persistable.js tests/vendor/persistable_worker.js crittable/vendor/persistable-supabase.js tests/vendor/persistable_supabase_mock.mjs
+          git add -A crittable/vendor/persistable.js tests/vendor/persistable_worker.js crittable/vendor/persistable-supabase.js tests/vendor/persistable_supabase_mock.mjs tests/vendor/persistable_token.mjs
           if git diff --cached --quiet; then echo "crittablejs is already current with persistablejs@$sha"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

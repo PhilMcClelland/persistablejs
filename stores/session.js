@@ -1,4 +1,4 @@
-/*! Persistable.js 0.1.0 store: the browser session · MIT · (c) 2026 Phil McClelland · https://github.com/PhilMcClelland/persistablejs */
+/*! Persistable.js 0.2.0 store: the browser session · MIT · (c) 2026 Phil McClelland · https://github.com/PhilMcClelland/persistablejs */
 /* Persistable.js with nothing behind it: the objects are kept in this tab (sessionStorage) and are gone when it closes.
    For starting a prototype before there is a backend, and for a demo that should send nothing anywhere. Load it after
    persistable.js:

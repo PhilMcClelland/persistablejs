@@ -24,7 +24,9 @@ jobs:
         run: node tests/rules.mjs
       - name: The read key
         run: node tests/readkey.mjs
+      - name: Tokens from a site
+        run: node tests/token.mjs
       - name: The client
         run: node tests/client.mjs
       - name: The files parse
-        run: node --check worker.js && node --check persistable.js && node --check verify.mjs && node --check readkey.mjs && node --check stores/supabase.js && node --check stores/session.js
+        run: node --check worker.js && node --check persistable.js && node --check verify.mjs && node --check readkey.mjs && node --check token.mjs && node --check newtoken.mjs && node --check stores/supabase.js && node --check stores/session.js

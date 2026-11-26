@@ -15,8 +15,8 @@ Your prototype talks to one small client. Where the data is kept is one option, 
 Start with no backend at all. This keeps the data in the browser tab:
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/PhilMcClelland/persistablejs@v0.1.0/persistable.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/PhilMcClelland/persistablejs@v0.1.0/stores/session.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/PhilMcClelland/persistablejs@v0.2.0/persistable.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/PhilMcClelland/persistablejs@v0.2.0/stores/session.js"></script>
 <script type="module">
   const db = Persistable({ store: 'session' });
   const votes = db.collection('votes');
@@ -60,16 +60,16 @@ Each object has two parts: `data`, which only its creator can change, and `open`
 - Collections of JSON objects: `create`, `get`, `list`, `update`, `setOpen`, `remove`.
 - Changes as they happen: `votes.subscribe({ onCreate, onUpdate, onDelete, onResync })`.
 - A space for each prototype, named after its address, with nothing to configure.
-- With the Worker: access by link with no accounts ([docs/access.md](docs/access.md)), plain HTTP for scripts and agents ([docs/http.md](docs/http.md)), and an owner's way in for removing what strangers add ([docs/admin.md](docs/admin.md)).
+- With the Worker: access by link with no accounts, or by a token from a site that has its own ([docs/access.md](docs/access.md)), plain HTTP for scripts and agents ([docs/http.md](docs/http.md)), and an owner's way in for removing what strangers add ([docs/admin.md](docs/admin.md)).
 
 ## What it is not
 
-It is right for prototypes and wrong for anything private. A key keeps strangers out; it does not make the data private. There are no queries (a collection is read whole), no file uploads and no accounts.
+It is right for prototypes and wrong for anything private. A key keeps strangers out; it does not make the data private. There are no queries (a collection is read whole), no file uploads and no accounts of its own.
 
 ## Docs
 
 - [Stores](docs/stores.md): what every store does, where they differ, and how to write one.
-- [Who can get in](docs/access.md): no key, a key in the link, a key in the page, read keys.
+- [Who can get in](docs/access.md): no key, a key in the link, a key in the page, read keys, a token from your own site.
 - [Removing data and handling abuse](docs/admin.md): `ADMIN_SECRET`, limits, and what is not limited.
 - [Patterns](docs/patterns.md): replies as child objects, hiding, store status, errors, spaces.
 - [From a script or an agent](docs/http.md): the HTTP calls.

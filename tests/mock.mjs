@@ -16,7 +16,9 @@ function storage() {
 /* One end of a socket. What it sends, the other end hears a moment later, as on a real line. The Worker's end is handed
    to acceptWebSocket, which sets `hears` and `ended`; the page's end has onmessage and onclose, like a browser's. */
 class End {
-  constructor() { this.peer = null; this.closed = null; this.tags = []; }
+  constructor() { this.peer = null; this.closed = null; this.tags = []; this.kept = null; }
+  serializeAttachment(v) { this.kept = structuredClone(v); }
+  deserializeAttachment() { return this.kept; }
   send(message) {
     if (this.closed) throw new Error('this socket is closed');
     const to = this.peer;

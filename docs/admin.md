@@ -14,6 +14,19 @@ The last two take everything under them, so they have to say so: without `?all=1
 
 The owner reaches a keyed space the way anyone does, with `?k=<key>` or `?r=<read key>` on the address; the read key is enough, and it is in the page. The store keeps no list of spaces, so there is nothing to browse: you act on the spaces you know (a prototype's origin, or the `space` it sets).
 
+A space reached by token ([access.md](access.md), "A token from your own site") is reached only by token, the owner included: `ADMIN_SECRET` without one arrives at the open space of the same name. Make the owner's token with `newtoken.mjs`, which reads `TOKEN_SECRET` from the environment, and put it on the address. It is good for ten minutes and for that one space:
+
+```sh
+# TOKEN_SECRET comes from the env file SETUP.md step 7 made, never typed into the command:  set -a; . ./.env.token; set +a
+T=$(node newtoken.mjs --space review/acme --owner)
+SPACE=review%2Facme                                         # the same space, URL-encoded
+curl "$S/v1/s/$SPACE/_collections?token=$T"                     # which collections are there
+curl -X DELETE "$S/v1/s/$SPACE/notes/$ID?token=$T"              # one object, and its children
+curl -X DELETE "$S/v1/s/$SPACE?all=1&token=$T"                  # the whole space
+```
+
+When your site drops an audience (a client leaves, a group is deleted), remove its space this way first: afterwards your records no longer say what the space was called, and the store has no list to find it in.
+
 A space is bounded so a stranger cannot grow it without limit: 2000 objects and 16 MB to a collection, 50 collections to a space, 200 listeners. The same bounds are what a stranger can fill in a space without a key: 50 collections of 16 MB each, which the prototype's own visitors then cannot add to. Only the owner can clear what a stranger filled, so set `ADMIN_SECRET` before the address is public. What is not bounded:
 
 - **The number of spaces.** Any name makes one, and each can be filled to its limits. Someone with a script and the store's address can use up the account's storage allowance; since spaces cannot be listed, the remedy then is to delete the Worker, which deletes everything, and deploy again.

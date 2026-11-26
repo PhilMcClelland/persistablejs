@@ -2,6 +2,15 @@
 
 Every file says its version in its first line, and a page can ask the client with `Persistable.version`. A deployed store runs whatever `worker.js` it was deployed with. After pulling a change to `worker.js`, deploy again; copy `persistable.js` again when it changes.
 
+## 0.2.0
+
+One thing changes for what worked in 0.1.0: `token` in an address's query is now the store's own word, so a request that happened to carry `?token=…` is refused where it used to be ignored. The client never sent one. To use tokens, deploy `worker.js` again and copy `persistable.js` again. The Supabase files changed only in their version line; `stores/supabase.sql` need not be run again.
+
+- Tokens: a site that already knows who its visitors are can vouch for them. Set `TOKEN_SECRET` on the Worker, have the site's server sign a token for each visitor it lets in (`token.mjs`), and give the client `token: () => fetch('/api/token').then(r => r.text())`. The token says which space the visitor is in and who they are. A space reached by token is separate from the same name reached any other way, and inside it the one rule holds: only an object's creator changes its `data` or deletes it. A token is a JWT signed with HS256, lasts an hour at most, and cannot be taken back. `read: true` makes one that only reads; `owner: true` makes the owner's (`newtoken.mjs` makes one from a terminal). The Worker only. `docs/access.md`, "A token from your own site".
+- `await db.ready()`: resolves when the store can be asked. With a token it waits for the first one, and `db.space`, `db.readOnly` and `db.name` are then what the token says.
+- A listener that came with a token hears nothing after the token runs out; the store closes it, with code 4001, when there is next something to send. The client opens the line again with a new token shortly before.
+- `docs/patterns.md`, "One prototype, several audiences".
+
 ## 0.1.0
 
 The first public version.

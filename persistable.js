@@ -1,4 +1,4 @@
-/*! Persistable.js 0.1.0 client · MIT · (c) 2026 Phil McClelland · https://github.com/PhilMcClelland/persistablejs */
+/*! Persistable.js 0.2.0 client · MIT · (c) 2026 Phil McClelland · https://github.com/PhilMcClelland/persistablejs */
 /* Persistable.js: a shared JSON object store for prototypes, behind one script tag.
    This is the browser client: one interface, whichever store the objects are kept in. The store it comes with is
    worker.js in the same repo (PhilMcClelland/persistablejs), deployed once to the host's own Cloudflare account, with
@@ -31,6 +31,7 @@
                                                    // While it is down and someone is hearing, the client asks again by itself.
      await db.me();                                // { id }: this browser, as the store sees it in this space
      db.space                                      // the space in use
+     await db.ready();                             // resolves when the store can be asked; only a store reached by token has anything to wait for
 
    Names and errors. A collection name is up to 40 lower-case letters, digits, - and _; an id is up to 80 letters,
    digits, . - and _; both start with a letter or digit. The client refuses any other before asking the store.
@@ -71,6 +72,18 @@
                    without one reads, and starts no circle of their own. With no key option at all, everyone reads.
                    Once the browser holds the key it is taken out of the address bar, so the address a writer copies
                    to show the page around does not carry it; db.link() gives the link that does.
+   Vouched for by your own site. When the page is on a site that already knows who its visitors are, its server can
+   say so, and the store then takes the site's word for which space a visitor is in and who they are:
+     token: () => fetch('/api/token').then(r => r.text())    a function that gets a token from your server
+   The Worker only, and not with key, read or space: the token says all three. Your server signs the token with the
+   secret it shares with the store (token.mjs in the persistablejs repo does it; docs/access.md has the whole of it).
+   The client asks for a new one shortly before the old runs out. A space reached by token is its own: nobody reaches
+   it without a token from your site, and inside it only an object's creator can change its `data` or delete it.
+   await db.ready() waits for the first token; after it db.space is the token's space, db.readOnly says whether the
+   token only reads, and db.name is the name your server gave, or null ((await db.me()).name has it too). All three
+   follow the latest token. If the function fails (your server says this visitor is not let in), calls reject with
+   that error, and one that has `status` keeps it; the server is then asked again less and less often, up to once a
+   minute, so a visitor who signs in is noticed within that. While a token in hand is still good it goes on being used.
    db.readOnly says which this visitor is. await db.readKey() gives the read key for the key in use (to copy into a
    page); the same value comes from `node readkey.mjs -` in the persistablejs repo, which reads the key from
    standard input. */
@@ -114,7 +127,9 @@
       if (probe || up !== false || !hearers.length) return;
       probe = setTimeout(function () {
         probe = null; pause = Math.min(pause * 2, 60000);
-        if (up === false && hearers.length) store.me().catch(function () { /* mark() has heard, and asks again */ });
+        /* mark() hears a store that does not answer, and asks again. A call that never reached the store (no token to
+           send, say) tells it nothing, so the next question is set here. */
+        if (up === false && hearers.length) store.me().catch(function () { ask(); });
       }, pause);
     }
     function onStatus(fn) {
@@ -123,6 +138,10 @@
       return function () { hearers = hearers.filter(function (h) { return h !== fn; }); if (!hearers.length) { clearTimeout(probe); probe = null; pause = 5000; } };
     }
     var store = build(opt, { root: root, space: space, storage: box, fetch: opt.fetch || root.fetch.bind(root), random: random, hex: hex, mark: mark });
+    /* the same for a token: a store that ignored it would put the visitor in the open space named after the page. And a
+       token option that is there with nothing in it (a function that was never defined) is a mistake, not a choice. */
+    if (Object.prototype.hasOwnProperty.call(opt, 'token') && typeof opt.token !== 'function') throw new Error('persistable: token is a function that returns a token from your server');
+    if (opt.token != null && !store.token) throw new Error('persistable: this store takes no tokens');
     /* a key asked for and not kept would be a page that thinks its data is among friends when it is open to all */
     if ((opt.key || opt.read) && !store.key && !store.readOnly) throw new Error('persistable: this store has no link keys or read keys');
     /* The store's own patterns for a collection name and an id. They are checked here as well, before either becomes
@@ -232,8 +251,18 @@
       };
     }
     var no = function (v) { return function () { return v; }; };
-    return { space: space, key: store.key || null, readOnly: !!store.readOnly, readKey: store.readKey || no(Promise.resolve(null)), link: store.link || no(null), adopt: store.adopt || no(false), fresh: store.fresh || no(null),
+    var db = { space: space, key: store.key || null, readOnly: !!store.readOnly, readKey: store.readKey || no(Promise.resolve(null)), link: store.link || no(null), adopt: store.adopt || no(false), fresh: store.fresh || no(null),
       collection: collection, watch: watch, onStatus: onStatus, me: function () { return store.me(); } };
+    /* A store that learns its space and what the visitor may do only when it first asks (one reached by token) says so
+       with told(): ready() waits for that, and the two properties then say what was learned. Any other store is ready at once. */
+    db.name = null;
+    db.ready = function () { return Promise.resolve(typeof store.told === 'function' ? store.told() : null).then(function () { return db; }); };
+    /* such a store's space, and what the visitor may do, are whatever its latest token says: asked each time they are read */
+    if (typeof store.says === 'function') {
+      var say = function (key, before) { Object.defineProperty(db, key, { enumerable: true, get: function () { var now = store.says(); return now ? now[key] : before; } }); };
+      say('space', space); say('readOnly', false); say('name', null);
+    }
+    return db;
   }
 
   /* The store that comes with this file: worker.js from the same repo, on the host's own Cloudflare account, reached
@@ -242,6 +271,11 @@
     var space = kit.space, box = kit.storage, mark = kit.mark, Socket = opt.WebSocket === undefined ? root.WebSocket : opt.WebSocket;
     var url = String(opt.url || '').trim().replace(/\/+$/, '');
     if (!url) throw new Error('persistable: url is required');
+    if (opt.token != null) {
+      if (typeof opt.token !== 'function') throw new Error('persistable: token is a function that returns a token from your server');
+      if (opt.key || opt.read || opt.space) throw new Error('persistable: with a token, leave out key, read and space: the token says them');
+      return byToken(opt, kit, url, Socket);
+    }
     var base = url + '/v1/s/' + encodeURIComponent(space) + '/', SLOT = 'persistable.' + url;
     /* The read key that goes with a key: the first 20 bytes of SHA-256 over a fixed label and the key, in hex. worker.js
        and readkey.mjs compute the same thing. SHA-256 is written out here because the browser's own is asynchronous and
@@ -406,7 +440,156 @@
     };
   }
 
+  /* The same store, reached by a token from the page's own site (see "Vouched for by your own site" at the top).
+     Nothing is kept in the browser: who the visitor is, and which space they are in, is in the token, and the token is
+     asked for again each visit. What the token says is read here only to know where to send it and when to renew it;
+     whether it is true is the store's to check. */
+  function byToken(opt, kit, url, Socket) {
+    var mark = kit.mark, held = null, asking = null, first = null;
+    /* A token is renewed a little before it runs out, so none is sent in its last moments: 30 seconds before, or a
+       quarter of its life when that is less. How long it has is counted from when it arrived, by the token's own
+       account of its life (exp less iat), so a browser whose clock is wrong still keeps it for as long as it is good.
+       A token that does not say when it was made is timed by the browser's clock when that gives a believable answer,
+       and otherwise kept for a minute. */
+    var SOON = 30000, PATIENCE = 20000;   // and a site that does not answer is not waited on for ever
+    function unpack(token) {
+      var parts = typeof token === 'string' ? token.trim().split('.') : [], claim = null;
+      try {
+        var b = parts[1].replace(/-/g, '+').replace(/_/g, '/'), raw = kit.root.atob(b + '==='.slice((b.length + 3) % 4));
+        claim = JSON.parse(decodeURIComponent(raw.replace(/[^]/g, function (c) { return '%' + ('0' + c.charCodeAt(0).toString(16)).slice(-2); })));
+      } catch (_) { claim = null; }
+      /* only the letters a token is made of go into an address: anything else would be read there as something more */
+      if (parts.length !== 3 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token.trim()) || !claim || typeof claim !== 'object' || typeof claim.space !== 'string' || !claim.space || typeof claim.exp !== 'number') throw new Error('persistable: the token function did not return a token (a JWT with space and exp)');
+      var life = typeof claim.iat === 'number' && claim.exp > claim.iat ? (claim.exp - claim.iat) * 1000 : claim.exp * 1000 - Date.now();
+      if (!(life >= 5000 && life <= 3660000)) life = 60000;
+      return { token: token.trim(), space: claim.space, until: tick() + life, ahead: Math.min(SOON, life / 4), name: typeof claim.name === 'string' ? claim.name : null, readOnly: claim.read === true && claim.owner !== true };
+    }
+    /* The token in hand, or a new one: asked for once however many calls are waiting on it.
+       `refused` is a token the store has just turned down: if a newer one is already in hand that is the answer, and
+       otherwise the site is asked. A site that fails to hand one over is not asked again at once: a page that goes on
+       calling (a signed-out tab that polls) would ask it without end, so the failure stands for a while, longer each
+       time. And while the token in hand is still good, a failed renewal is no reason to stop using it. */
+    var failed = null, rest = 0, restUntil = 0, last = null, shunErr = null, shun = 0, shunUntil = 0;
+    /* time for "how long since": the page's own steady count where there is one, since the clock on the wall can be set */
+    var tick = function () { var p = kit.root.performance; return p && typeof p.now === 'function' ? p.now() : Date.now(); };
+    function spurn(e) { failed = e; rest = Math.min(rest ? rest * 2 : 2000, 60000); restUntil = tick() + rest; }
+    function ticket(refused) {
+      var now = tick();
+      if (refused && held && held.token === refused) held = null;
+      /* the store has turned this site's tokens down twice running: until its rest is over, another would fare no better */
+      if (shunErr && now < shunUntil) return Promise.reject(shunErr);
+      if (held && held.until - now > held.ahead) return Promise.resolve(held);
+      if (asking) return asking;
+      if (failed && now < restUntil) return held && held.until > now ? Promise.resolve(held) : Promise.reject(failed);
+      var timer = null, late = new Promise(function (_, fail) { timer = setTimeout(function () { fail(new Error('persistable: the token function did not answer in time')); }, PATIENCE); if (timer && timer.unref) timer.unref(); });
+      /* everyone waiting gets the same answer, the fallback included */
+      var mine = asking = Promise.race([Promise.resolve().then(function () { return opt.token(); }), late]).then(unpack).then(function (got) {
+        /* the page was drawn from one space's data: a token for another (the visitor changed group in another tab) is
+           refused, and asked for again later, when the site may say the first space once more */
+        if (first && got.space !== first) throw new Error('persistable: the token is for another space than the page started in; load the page again');
+        clearTimeout(timer); if (asking === mine) asking = null;
+        first = got.space; held = last = got; failed = null; rest = 0;
+        return got;
+      }, null).then(null, function (e) {
+        clearTimeout(timer); if (asking === mine) asking = null;
+        spurn(e);
+        if (held && held.until > tick()) return held;
+        throw e;
+      });
+      return mine;
+    }
+    var where = function (t, path, more) { return url + '/v1/s/' + encodeURIComponent(t.space) + '/' + path + '?token=' + t.token + (more ? '&' + more : ''); };
+    function call(method, path, body, what, refused) {
+      return ticket(refused).then(function (t) {
+        var init = { method: method, headers: {} };
+        if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+        return kit.fetch(where(t, path), init).then(function (r) { mark(r.status < 500); return r; }, function (e) { mark(false); throw e; }).then(function (r) {
+          if (r.status === 204) return null;
+          /* the store no longer takes this token (its clock is ahead of ours, say): ask the site for another, once */
+          if (r.status === 401 && !refused) return call(method, path, body, what, t.token);
+          /* refused twice running: the store does not take this site's tokens just now (the two do not share a secret,
+             or the site's clock is far out). Asking the site again for every call would not change that, so it rests
+             as it does when the site itself fails. */
+          /* (its rest is counted apart from the site's, and only an answer from the store that is not a refusal ends
+             it: the site goes on handing tokens over without trouble all the while, the same one each time if it likes.
+             Calls refused together count once: the first starts the rest, and the others find it started.) */
+          if (r.status === 401) {
+            if (held && held.token === t.token) held = null;
+            if (!(shunErr && tick() < shunUntil)) { shun = Math.min(shun ? shun * 2 : 2000, 60000); shunErr = new Error('persistable: the store refused the token the site gave'); shunErr.status = 401; shunUntil = tick() + shun; }
+          } else { shun = 0; shunErr = null; }
+          return r.text().then(function (text) {
+            var j = null; try { j = text ? JSON.parse(text) : null; } catch (_) { j = null; }
+            if (!r.ok) { var e = new Error('persistable: ' + what + ' failed (' + r.status + ') ' + ((j && j.message) || '')); e.status = r.status; e.detail = (j && j.message) || null; throw e; }
+            return j;
+          });
+        });
+      });
+    }
+    /* The line to the store carries the token it was opened with, and the store closes it when that runs out. So it is
+       opened again with a new token a little before: watchers hear the line come back, and read again. */
+    function listen(ear) {
+      var ws = null, wait = 2000, timer = null, beat = null, renew = null, off = false, renewing = false;
+      function open() {
+        if (off) return;
+        ticket().then(function (t) {
+          if (off) return;
+          var mine;
+          try { mine = ws = new Socket(where(t, '_watch', 'feed=2').replace(/^http/, 'ws')); } catch (_) { retry(); return; }
+          mine.onopen = function () {
+            if (mine !== ws) return;
+            wait = 2000; ear.state(true);
+            beat = setInterval(function () { try { mine.send('ping'); } catch (_) { /* closing */ } }, 30000);
+            /* only a token with time in hand: one already in its last moments is here because no newer one could be
+               had, and closing the line for it would open the same line again, over and over. It stays until the store
+               closes it, and the next is opened the slow way. */
+            var left = t.until - tick() - t.ahead;
+            if (left > 0) renew = setTimeout(function () { renewing = true; try { mine.close(); } catch (_) { /* closing */ } }, Math.max(1000, left));
+          };
+          mine.onmessage = function (e) {
+            if (mine !== ws) return;
+            var text = String(e.data), what = null;
+            mark(true);
+            if (text === 'pong') return;
+            if (text.charAt(0) === '{') { try { what = JSON.parse(text); } catch (_) { what = null; } }
+            if (what && what.collection) ear.change(what.collection, what); else ear.change(text);
+          };
+          mine.onclose = function () {
+            if (mine !== ws) return;
+            clearInterval(beat); clearTimeout(renew); ear.state(false);
+            /* closed here to change tokens: open again at once. Watchers hear the line come back and read again, so
+               nothing said in between is missed. */
+            if (renewing) { renewing = false; open(); return; }
+            call('GET', '_me', undefined, 'whoami').catch(function () { /* mark() has heard */ });
+            retry();
+          };
+          mine.onerror = function () { try { mine.close(); } catch (_) { /* never opened */ } };
+        }, retry);   // no token to open it with: the site may let this visitor in later
+      }
+      function retry() { if (off) return; clearTimeout(timer); timer = setTimeout(open, wait); wait = Math.min(wait * 2, 60000); }
+      open();
+      return function () {
+        off = true; clearTimeout(timer); clearInterval(beat); clearTimeout(renew);
+        var old = ws; ws = null;
+        try { old.close(); } catch (_) { /* not open */ }
+      };
+    }
+    var at = function (name, id) { return name + '/' + id; };
+    return {
+      token: true,
+      told: function () { return ticket(); },
+      /* what the token in hand says, or null before the first */
+      says: function () { return held || last; },
+      me: function () { return call('GET', '_me', undefined, 'whoami').then(function (me) { if (me && held && held.name !== null) me.name = held.name; return me; }); },
+      list: function (name) { return call('GET', name, undefined, 'list'); },
+      get: function (name, id) { return call('GET', at(name, id), undefined, 'get').catch(function (e) { if (e.status === 404 && e.detail === 'missing') return null; throw e; }); },
+      create: function (name, body) { return call('POST', name, body, 'create'); },
+      patch: function (name, id, parts) { return call('PATCH', at(name, id), parts, 'update'); },
+      remove: function (name, id) { return call('DELETE', at(name, id), undefined, 'remove'); },
+      listen: Socket ? listen : undefined
+    };
+  }
+
   make.stores = { worker: worker };
-  make.version = '0.1.0';   // the same as in the first line of this file, for a page (or a person) to ask which copy this is
+  make.version = '0.2.0';   // the same as in the first line of this file, for a page (or a person) to ask which copy this is
   root.Persistable = make;
 })(typeof window !== 'undefined' ? window : globalThis);

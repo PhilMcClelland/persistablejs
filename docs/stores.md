@@ -32,6 +32,7 @@ The session store is left out of the table: it keeps one tab's objects in `sessi
 | A person is | A secret the browser makes up | An anonymous sign-in |
 | Changes arrive | Pushed, at once, saying what changed | Asked for every few seconds, saying which collection |
 | Link keys and read keys | Yes | No (`key` and `read` are refused) |
+| Tokens from your own site | Yes | No (`token` is refused) |
 | The owner's way in | `ADMIN_SECRET` | The SQL editor |
 | Closing it to other websites | `ALLOW_ORIGINS` | Not available |
 | How many spaces | No limit | 200000 objects and 200 MB in all |

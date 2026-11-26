@@ -1,4 +1,4 @@
-/*! Persistable.js 0.1.0 store · MIT · (c) 2026 Phil McClelland · https://github.com/PhilMcClelland/persistablejs */
+/*! Persistable.js 0.2.0 store · MIT · (c) 2026 Phil McClelland · https://github.com/PhilMcClelland/persistablejs */
 /* Persistable.js: a small JSON object store for prototypes, in one file, for a Cloudflare Worker.
    Deploy it once to your own account (see SETUP.md) and any number of prototypes can keep shared data in it
    with a script tag and no API keys. There is nothing to keep running: the Worker sleeps when nobody is using it.
@@ -26,6 +26,21 @@
    space as ?k=<key> and may only GET and listen; anything else is refused. A keyed space is named after its read
    key, so the store still keeps no list, and the read key cannot be turned back into the key.
 
+   Vouched for by the page's own site. Set TOKEN_SECRET (`npx wrangler@4 secret put TOKEN_SECRET`, 32 characters or
+   more, random) and give the same value to the server of a site that already knows who its visitors are. That server
+   signs a token for each visitor it has let in: a JWT, HS256 and nothing else, saying
+     { space, sub, exp }        which space, who the person is there, and when the token runs out (an hour at most)
+     iat                        when it was made. Not read here; the client times the token by it. Send it.
+     read: true                 optional: this person may read and listen, nothing else
+     owner: true                optional: this caller is the owner in this space (see below); `sub` is then optional
+   Add ?token=<token> to any address. The space in the address has to be the token's. A space reached by token is separate
+   from the same name reached without one, or with a key, and can be reached in no other way: nobody gets in by
+   guessing its name. Who a person is comes from `sub`, not from a secret the browser made up, and the one rule holds
+   as it does with no key: only whoever created an object changes its `data` or deletes it. There is no list of
+   tokens and no way to take one back; a token stops working when it runs out, which is why it cannot last long.
+   `token` is the store's word on every address: one that is not a token is refused, not ignored.
+   token.mjs in this repository makes them. Without TOKEN_SECRET set, every token is refused.
+
    The owner. Set ADMIN_SECRET (`npx wrangler@4 secret put ADMIN_SECRET`, 24 characters or more) and send it as the
    Bearer token: that caller may read, change and delete anything in the space an address reaches, list its
    collections, clear one, or remove the space whole. It is how abuse is taken down. A keyed space is still reached
@@ -50,14 +65,15 @@
                                     create, update, delete or clear (the owner emptied the collection; no id), and
                                     object is the new state (absent for delete and clear, and for an object over
                                     8 KB as stored: GET it). Listeners only listen: one that sends anything but
-                                    a keep-alive "ping" is closed.
+                                    a keep-alive "ping" is closed. One that came with a token hears nothing after
+                                    the token runs out: it is closed when there is next something to send.
    and, with nothing after the space:
      DELETE /v1/s/<space>?all=1     remove everything in the space and drop its listeners (the owner only)
    The two wide deletes are refused (400) without ?all=1, and an address with an empty part or a slash on the end is
    no address (404): an address that lost its last part on the way must not come to mean something wider. A method
    an address does not take is answered 405.
 
-   Settings (optional): ALLOW_ORIGINS, a comma-separated list of page origins that may use this store. Without it
+   Settings (optional): TOKEN_SECRET and ADMIN_SECRET, above. ALLOW_ORIGINS, a comma-separated list of page origins that may use this store. Without it
    any page may. With it, a page on this machine (http://localhost:8000) is turned away like any other until its
    origin is listed, and so is a page opened from a file, which says its origin is `null`. In wrangler.jsonc "vars",
    or as a secret. */
@@ -83,11 +99,55 @@ const METHODS = ['GET', 'POST', 'PATCH', 'DELETE'];
 const wrong = () => no(405, 'this address does not take that method');
 const NOBODY = '-';   // never an owner: an owner is 32 hex digits, or "owner"
 const NO_SECRET = 'send a secret of 16 to 200 characters as a Bearer token';
+/* a token is good for an hour at most: there is no way to take one back, so running out is all that ends it. The slack
+   is for two clocks that do not quite agree. */
+const MAX_TOKEN_LIFE = 3600, CLOCK_SLACK = 60, MAX_TOKEN = 2000, MAX_PERSON = 200;
+/* headers the Worker writes for the space to read. Whatever a caller sent under these names is thrown away first. */
+const OURS = ['X-Persistable-Admin', 'X-Persistable-Person', 'X-Persistable-Read', 'X-Persistable-Until'];
 
 /* the read key that goes with a key: the first 20 bytes of SHA-256 over a fixed label and the key, in hex.
    persistable.js computes the same thing, so a page can be given the read key and never the key. */
 async function readKeyOf(key) {
   return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('persistable read key\n' + key))).slice(0, 40);
+}
+/* base64url to bytes; null for anything that is not base64url */
+function unbase64(text) {
+  if (!/^[A-Za-z0-9_-]+$/.test(text) || text.length % 4 === 1) return null;
+  try { return Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)); } catch (_) { return null; }
+}
+const unjson = bytes => { try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch (_) { return null; } };
+/* What a token says, once it is known to be the site's own: { person, read, owner, until }. Otherwise { status, message }.
+   Only HS256 is read. The header's word for the algorithm is checked and never followed: a token that names another
+   ("none", or a public-key one) is refused, not verified some other way. The signature is checked before a word of
+   the payload is believed, by the platform's own comparison, which takes the same time for a near miss as a wild one. */
+async function readToken(token, env, space) {
+  const secret = env && typeof env.TOKEN_SECRET === 'string' ? env.TOKEN_SECRET : '';
+  if (secret.length < 32) return { status: 403, message: 'this store takes no tokens' };
+  const bad = { status: 401, message: 'that is not a token this store signed' };
+  const parts = String(token).split('.');
+  if (token.length > MAX_TOKEN || parts.length !== 3) return bad;
+  const head = unbase64(parts[0]), body = unbase64(parts[1]), mark = unbase64(parts[2]);
+  if (!head || !body || !mark || mark.length !== 32) return bad;
+  const said = unjson(head);
+  if (!plain(said) || said.alg !== 'HS256') return bad;
+  const text = new TextEncoder(), key = await crypto.subtle.importKey('raw', text.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+  if (!(await crypto.subtle.verify('HMAC', key, mark, text.encode(parts[0] + '.' + parts[1])))) return bad;
+  const claim = unjson(body), now = Date.now() / 1000;
+  if (!plain(claim)) return bad;
+  if (typeof claim.exp !== 'number' || !Number.isFinite(claim.exp)) return { status: 401, message: 'a token says when it runs out (exp)' };
+  if (claim.exp <= now) return { status: 401, message: 'this token has run out' };
+  if (claim.exp > now + MAX_TOKEN_LIFE + CLOCK_SLACK) return { status: 401, message: 'a token lasts an hour at most' };
+  if ('nbf' in claim && (typeof claim.nbf !== 'number' || claim.nbf > now + CLOCK_SLACK)) return { status: 401, message: 'this token is not good yet' };
+  if (typeof claim.space !== 'string' || claim.space !== space) return { status: 403, message: 'this token is for another space' };
+  const owner = claim.owner === true, read = claim.read === true;
+  if (('owner' in claim && typeof claim.owner !== 'boolean') || ('read' in claim && typeof claim.read !== 'boolean')) return { status: 401, message: 'owner and read are true or false' };
+  let person = null;
+  if (claim.sub != null || !owner) {
+    if (typeof claim.sub !== 'string' || !claim.sub || claim.sub.length > MAX_PERSON || /[\u0000-\u001f]/.test(claim.sub)) return { status: 401, message: 'a token says who the person is (sub), in up to ' + MAX_PERSON + ' characters' };
+    try { encodeURIComponent(claim.sub); } catch (_) { return { status: 401, message: 'a token says who the person is (sub), in whole characters' }; }   // half a character pair cannot be carried on
+    person = claim.sub;
+  }
+  return { person, read: read && !owner, owner, until: claim.exp };
 }
 /* a body is read with a running count and dropped the moment it is too big, whatever length it claimed */
 async function readCapped(request, most) {
@@ -148,9 +208,11 @@ export default {
     const space = parts[2];
     if (parts[0] !== 'v1' || parts[1] !== 's' || !space || space.length > MAX_SPACE_NAME || /[\u0000-\u001f]/.test(space) || parts.length > 5) return no(404, 'no such address');
     if (parts.length === 3 && request.method !== 'DELETE') return wrong();
-    const k = url.searchParams.get('k'), r = url.searchParams.get('r');
+    const k = url.searchParams.get('k'), r = url.searchParams.get('r'), t = url.searchParams.get('token');
     if ((k !== null && !KEY.test(k)) || (r !== null && !KEY.test(r))) return no(400, 'a key is 16 to 200 letters, digits, - and _');
     if (k !== null && r !== null) return no(400, 'send the key or the read key, not both');
+    if (t !== null && (k !== null || r !== null)) return no(400, 'send a token or a key, not both');
+    if (url.searchParams.getAll('token').length > 1) return no(400, 'send one token');
     /* when a browser says which page is asking (it does on every write, and on reads from another site), it cannot lie about it: keep other sites out of a space named
        after a site, and out of the store altogether when ALLOW_ORIGINS is set */
     const origin = request.headers.get('Origin');
@@ -162,10 +224,21 @@ export default {
     /* A keyed space is named after its READ key, which is a one-way hash of the key (a line break cannot occur in a
        space name, so the two never collide). So the key finds the space by being hashed, the read key finds it as it
        is, and the read key cannot be turned back into the key. No list of keys is kept anywhere. */
-    const circle = k !== null ? await readKeyOf(k) : r;
-    /* the space is told whether this is the owner, in a header no caller can set for themselves */
-    const headers = new Headers(request.headers); headers.delete('X-Persistable-Admin');
-    if (await isAdmin(request, env)) headers.set('X-Persistable-Admin', '1');
+    let circle = k !== null ? await readKeyOf(k) : r;
+    /* the space is told who this is, in headers no caller can set for themselves */
+    const headers = new Headers(request.headers); for (const h of OURS) headers.delete(h);
+    let owner = await isAdmin(request, env);
+    if (t !== null) {
+      /* A space reached by token is named with a word no key or read key can be (they are 16 characters or more), so
+         it is its own space, and nothing but a token of the site's reaches it. */
+      const told = await readToken(t, env, space);
+      if (told.status) return no(told.status, told.message);
+      circle = 'token'; owner = owner || told.owner;
+      if (told.person !== null) headers.set('X-Persistable-Person', encodeURIComponent(told.person));   // a header carries only plain characters
+      if (told.read) headers.set('X-Persistable-Read', '1');
+      headers.set('X-Persistable-Until', String(told.until));
+    }
+    if (owner) headers.set('X-Persistable-Admin', '1');
     try {
       return await env.SPACES.get(env.SPACES.idFromName(circle === null ? space : space + '\n' + circle)).fetch(new Request(request, { headers }));
     } catch (e) { console.error(e); return no(500, 'the store could not do that'); }
@@ -186,11 +259,15 @@ export class Space {
   /* Who a caller is in this space: a fingerprint of their secret, keyed (HMAC-SHA-256) with a random value the space
      makes up once and keeps. Unkeyed, anyone could test guesses at a secret against the `owner` every reader sees,
      and the same secret would be the same `owner` in every space. Removing the space removes the value with it.
-     The owner is "owner" whatever the secret's length, and its fingerprint is never stored. */
+     The owner is "owner" whatever the secret's length, and its fingerprint is never stored.
+     In a space reached by token the same is done to the person's name in the token, so `owner` does not show readers
+     the site's own name for anyone. */
   async who(request, admin, make) {
     if (admin) return 'owner';
-    const secret = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, ''), text = new TextEncoder();
-    if (secret.length < 16 || secret.length > 200) return null;
+    /* with a token, the person is who the site says; the Bearer secret, if one came too, is not looked at */
+    const person = request.headers.get('X-Persistable-Person'), text = new TextEncoder();
+    const secret = person !== null ? 'person\n' + decodeURIComponent(person) : (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+    if (person === null && (secret.length < 16 || secret.length > 200)) return null;
     if (!this.salt) this.salt = await this.store.get('salt');
     /* A space with no value yet holds nothing anyone made, so until someone asks who they are (_me) or adds something,
        a caller is nobody in particular and nothing is made up: a read, or a request that is refused, must not be what
@@ -207,7 +284,16 @@ export class Space {
     const all = this.ctx.getWebSockets ? this.ctx.getWebSockets() : [];
     if (!all.length) return;
     const full = JSON.stringify({ collection, op, id, object: object && bytes(object) <= MAX_FEED_OBJECT ? object : undefined }), wantFull = new Set(this.ctx.getWebSockets('feed2'));
-    for (const ws of all) { try { ws.send(wantFull.has(ws) ? full : collection); } catch (_) { /* that listener has gone */ } }
+    for (const ws of all) { if (this.spent(ws)) continue; try { ws.send(wantFull.has(ws) ? full : collection); } catch (_) { /* that listener has gone */ } }
+  }
+  /* A listener that came with a token is let go once the token has run out, and hears nothing from then on. It is
+     looked at whenever there is something to send or a new listener asks for a place: a quiet space sends nothing to anyone. */
+  spent(ws) {
+    let kept = null;
+    try { kept = ws.deserializeAttachment ? ws.deserializeAttachment() : null; } catch (_) { kept = null; }
+    if (!kept || typeof kept.until !== 'number' || kept.until * 1000 > Date.now()) return false;
+    try { ws.close(4001, 'token ran out'); } catch (_) { /* already gone */ }
+    return true;
   }
   /* nothing a caller sends should be able to take the store down with an unhandled error: say so in JSON, and leave
      the error where `npx wrangler@4 tail` shows it */
@@ -237,9 +323,10 @@ export class Space {
     const collection = parts[3], id = parts[4], method = request.method;
     const admin = request.headers.get('X-Persistable-Admin') === '1';   // the owner (ADMIN_SECRET): may read, change and delete anything
     const trusted = admin || url.searchParams.has('k');   // a keyed space: everyone who got this far was given the key
-    const reading = !admin && url.searchParams.has('r');   // came with the read key: may look and listen, nothing else
+    const byToken = request.headers.has('X-Persistable-Until');
+    const reading = !admin && (url.searchParams.has('r') || request.headers.get('X-Persistable-Read') === '1');   // came with the read key, or a token that only reads: may look and listen, nothing else
     const wide = url.searchParams.getAll('all').join() === '1';   // a delete of more than one object has to say it means it
-    if (reading && method !== 'GET') return no(403, 'the read key only reads');
+    if (reading && method !== 'GET') return no(403, byToken ? 'this token only reads' : 'the read key only reads');
     if (collection === undefined) {   // the owner removes the space whole; its listeners reconnect and read again
       if (method !== 'DELETE') return wrong();
       if (!admin) return no(403, 'only the owner can remove a space');
@@ -255,12 +342,13 @@ export class Space {
     if (collection === '_collections') return admin ? reply(200, (await this.store.get('cols')) || []) : no(403, 'only the owner can list collections');
     if (collection === '_watch') {
       if (request.headers.get('Upgrade') !== 'websocket' || typeof WebSocketPair === 'undefined') return no(426, 'open this address as a WebSocket');
-      if (this.ctx.getWebSockets && this.ctx.getWebSockets().length >= MAX_LISTENERS) return no(429, 'this space has all the listeners it can take');
+      if (this.ctx.getWebSockets && this.ctx.getWebSockets().filter(ws => !this.spent(ws)).length >= MAX_LISTENERS) return no(429, 'this space has all the listeners it can take');
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1], url.searchParams.get('feed') === '2' ? ['feed2'] : []);
+      if (byToken && pair[1].serializeAttachment) pair[1].serializeAttachment({ until: Number(request.headers.get('X-Persistable-Until')) });
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
-    if (collection === '_me') { const me = await this.who(request, admin, true); if (me) await this.keepSalt(); return me ? reply(200, { id: me }) : no(401, NO_SECRET); }
+    if (collection === '_me') { const me = await this.who(request, admin, true); if (me) await this.keepSalt(); return me ? reply(200, { id: me }) : no(401, byToken ? 'this token names no person' : NO_SECRET); }
     if (!NAME.test(collection)) return no(400, BAD_NAME);
     if (id !== undefined && !ID.test(id)) return no(400, BAD_ID);
     if (!(id === undefined ? ['GET', 'POST', 'DELETE'] : ['GET', 'PATCH', 'DELETE']).includes(method)) return wrong();
@@ -273,7 +361,7 @@ export class Space {
     }
     /* worked out only now: a read needs no name */
     let who = await this.who(request, admin, false);
-    if (!who) return no(401, NO_SECRET);
+    if (!who) return no(401, NO_SECRET);   // never by token: one that is not the owner's names a person
     let body = {};
     if (method !== 'DELETE') {
       /* refuse on the stated length before reading, and stop reading at the limit whatever was stated */

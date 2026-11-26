@@ -1,4 +1,4 @@
-/*! Persistable.js 0.1.0 store: Supabase · MIT · (c) 2026 Phil McClelland · https://github.com/PhilMcClelland/persistablejs */
+/*! Persistable.js 0.2.0 store: Supabase · MIT · (c) 2026 Phil McClelland · https://github.com/PhilMcClelland/persistablejs */
 /* Persistable.js, kept in a Supabase project in place of a Cloudflare Worker. Load it after persistable.js:
 
      <script src="persistable.js"></script>

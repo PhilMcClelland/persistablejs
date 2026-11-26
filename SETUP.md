@@ -77,6 +77,15 @@ You need a Cloudflare account (free), Node 22 or later, and this repo checked ou
      ```
    - Tell the person what `ALLOW_ORIGINS` does not stop: it refuses other websites, not a script or a command line.
 
+7. **Only if the prototype's own site signs people in, and they should be kept apart or named: tokens.** Skip this otherwise. It needs code on that site's server, and the steps are in `docs/access.md`, "A token from your own site". The store's part is one more secret, made and set the same way as the owner's:
+
+   ```sh
+   git check-ignore -q .env.token && (set -C; umask 077; node -e "console.log('TOKEN_SECRET=' + require('crypto').randomBytes(32).toString('hex'))" > .env.token)
+   sed -n 's/^TOKEN_SECRET=//p' .env.token | head -n 1 | npx wrangler@4 secret put TOKEN_SECRET
+   ```
+
+   The site's server needs the same value as a secret of its own. `node tests/token.mjs` proves the store's side of it without a deploy.
+
 That is the whole setup, and it is done once: the next prototype needs only step 4, and its origin added to `ALLOW_ORIGINS` (with a `space` of its own if it shares an origin with another).
 
 ## Using it

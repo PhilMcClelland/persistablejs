@@ -13,7 +13,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // PERSISTABLE_VERIFY_MOCK=1 runs the same checks against tests/mock.mjs (the Worker's code in Node; no account needed)
 const mock = !!process.env.PERSISTABLE_VERIFY_MOCK;
 const stand = mock ? await import(path.join(here, 'tests', worker ? 'mock.mjs' : 'mock-supabase.mjs')) : null, fetch = mock ? stand.default : globalThis.fetch;
-const ctx = { fetch, console, crypto: globalThis.crypto, WebSocket: mock ? stand.Socket : globalThis.WebSocket, setTimeout, clearTimeout, setInterval, clearInterval };
+const ctx = { fetch, console, atob, crypto: globalThis.crypto, WebSocket: mock ? stand.Socket : globalThis.WebSocket, setTimeout, clearTimeout, setInterval, clearInterval };
 ctx.globalThis = ctx; ctx.window = ctx;
 for (const file of worker ? ['persistable.js'] : ['persistable.js', 'stores/' + store + '.js']) vm.runInNewContext(fs.readFileSync(path.join(here, file), 'utf8'), ctx);
 const memory = () => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); } }; };
@@ -79,5 +79,20 @@ await step('without the key, or with another, there is nothing to see', async ()
 await step('with the key, someone else can change its data', async () => { const got = await things(dan).update(shared.id, { label: 'edited' }); if (got.data.label !== 'edited' || got.owner !== (await cat.me()).id) throw new Error('unexpected: ' + JSON.stringify(got)); });
 await step('with the key, someone else can delete it', async () => { await things(dan).remove(shared.id); if ((await things(cat).list()).length) throw new Error('still there'); });
 await step('a short key is refused', async () => { const r = await fetch(url.replace(/\/+$/, '') + '/v1/s/' + encodeURIComponent(space) + '/things?k=short'); if (r.status !== 400) throw new Error('expected 400, got ' + r.status); });
+// tokens: a site vouching for its visitors. Checked in full when TOKEN_SECRET is in the environment (the same value the store has); otherwise only that a made-up one is turned away.
+if (mock) stand.env.TOKEN_SECRET = process.env.TOKEN_SECRET = 'made-up-for-the-mock-' + 'x'.repeat(24);
+const SECRET = process.env.TOKEN_SECRET, { token } = await import(path.join(here, 'token.mjs'));
+await step('a token the store did not sign is refused', async () => { const t = await token('not-the-store-s-secret-' + 'x'.repeat(24), { space, person: 'nobody' }), r = await fetch(at('things') + '?token=' + t); if (r.status !== 401 && r.status !== 403) throw new Error('expected 401 (or 403 from a store with no TOKEN_SECRET), got ' + r.status); });
+if (!SECRET) console.log('  --   tokens not checked further: to check them, put the store\'s TOKEN_SECRET in the environment (docs/access.md)');
+else {
+  const by = (who, more) => ctx.Persistable({ url, fetch, WebSocket: null, token: () => token(SECRET, Object.assign({ space, person: who }, more)) }), eve = by('eve', { name: 'Eve' }), fay = by('fay');
+  let theirs;
+  await step('with a token, the store takes the site\'s word for the space and the person', async () => { await eve.ready(); const me = await eve.me(), again = await by('eve').me(); if (eve.space !== space || me.name !== 'Eve' || me.id !== again.id || me.id === (await fay.me()).id) throw new Error('unexpected: ' + JSON.stringify(me)); });
+  await step('a space reached by token is its own', async () => { theirs = await things(eve).create({ label: 'by token' }); const inside = await things(fay).list(), outside = await things(person()).list(); if (inside.length !== 1 || outside.some(o => o.id === theirs.id)) throw new Error('inside ' + inside.length + ', outside ' + outside.length); });
+  await step('with a token, someone else still cannot change its data or delete it', async () => { await refuses('changing another person\'s data', 403, () => things(fay).update(theirs.id, { label: 'hijacked' })); await refuses('deleting another person\'s object', 403, () => things(fay).remove(theirs.id)); });
+  await step('a token for another space is refused here', async () => { const t = await token(SECRET, { space: space + '-other', person: 'eve' }), r = await fetch(at('things') + '?token=' + t); if (r.status !== 403) throw new Error('expected 403, got ' + r.status); });
+  await step('a token that only reads cannot write', () => refuses('writing with a read token', 403, () => things(by('gus', { read: true })).create({})));
+  await step('the owner\'s token removes the space', async () => { const t = await token(SECRET, { space, owner: true }), r = await fetch(url.replace(/\/+$/, '') + '/v1/s/' + encodeURIComponent(space) + '?all=1&token=' + t, { method: 'DELETE' }); if (r.status !== 204 || (await things(fay).list()).length) throw new Error('status ' + r.status); });
+}
 console.log(failed ? '\n' + failed + ' check(s) failed. See SETUP.md.' : '\nAll checks passed.');
 process.exit(failed ? 1 : 0);
